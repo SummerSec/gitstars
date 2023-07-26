@@ -47,3 +47,4 @@ GitHub API 20.205.243.166 节点偶现连接超时，暂时没有想到好的解
 ## Vercel 部署
 
 [WIKI Vercel 部署](https://github.com/cfour-hi/gitstars/wiki/Vercel-%E9%83%A8%E7%BD%B2)
+
