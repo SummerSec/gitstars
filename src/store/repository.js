@@ -1,28 +1,59 @@
 import { defineStore } from 'pinia';
-import { getStarredRepos } from '@/server/github';
-import { STARRED_REPOS, REPO_SORT_TYPE, TAG_TYPE } from '@/constants';
+import { getStarredRepositories } from '@/server/github';
+import { STARRED_REPOS, REPO_SORT_TYPE, TAG_TYPE, TAG_SRC } from '@/constants';
 import { useTagStore } from '@/store/tag';
+import { useRankingStore } from '@/store/ranking';
 
 /**
- * 通过 HTTP 获取 repositories
- * @param {Array} list 渐进式添加 repositories 数据，让用户更快得到反馈
+ * 通过 HTTP 获取 repositories 并更新
+ * Github 接口使用 HTTP2 协议，无并发限制
+ *
+ * @param {Array} storeRepositories
  * @returns
  */
-async function _resolveRepositories(list = []) {
-  const MAX_PAGE = 9999;
-  const PER_PAGE = 100;
-  for (let i = 1; i < MAX_PAGE; i++) {
-    const repositories = await getStarredRepos({
-      per_page: PER_PAGE,
-      page: i,
-    });
-    list.push(...repositories);
+async function handlerRsolveRepositories(storeRepositories) {
+  const PAGE_SIZE = 100;
+  const PARALLEL_NUM = 10;
+  const STEP_SIZE = PAGE_SIZE * PARALLEL_NUM;
+  let parallelRequests = [];
+  let page = 1;
+  let repositoryIndex = 0;
 
-    if (repositories.length < PER_PAGE) {
-      break;
+  do {
+    parallelRequests.push(
+      getStarredRepositories({ page, per_page: PAGE_SIZE }),
+    );
+
+    if (page % PARALLEL_NUM === 0) {
+      const httpRepositories = (await Promise.all(parallelRequests)).flat();
+      parallelRequests = [];
+
+      for (let i = 0; i < httpRepositories.length; i += 1) {
+        const httpRepo = httpRepositories[i];
+        const storeRepo = storeRepositories[repositoryIndex];
+
+        if (storeRepo) {
+          if (storeRepo.id !== httpRepo.id) {
+            const storeRepoIndex = storeRepositories.findIndex(
+              ({ id }) => id === httpRepo.id,
+            );
+            if (storeRepoIndex >= 0) {
+              storeRepositories.splice(storeRepoIndex, 1);
+            }
+            storeRepositories.splice(repositoryIndex, 0, httpRepo);
+          }
+        } else {
+          storeRepositories.splice(repositoryIndex, 0, httpRepo);
+        }
+        repositoryIndex += 1;
+      }
+      if (httpRepositories.length < STEP_SIZE) {
+        storeRepositories.splice(repositoryIndex);
+        break;
+      }
     }
-  }
-  return list;
+    page += 1;
+  } while (true);
 }
 
 export const useRepositoryStore = defineStore('repository', {
@@ -57,38 +88,49 @@ export const useRepositoryStore = defineStore('repository', {
     filteredRepositories: (state) => {
       let repositoriesTmp = [];
       const tagStore = useTagStore();
+      const rankingStore = useRankingStore();
 
-      if (!tagStore.selected) {
-        /**
-         * 当前未选中 tag
-         * 展示所有 repositories
-         * 不可直接使用 state.all
-         * 下文的排序处理会对 repositoriesTmp 进行变更
-         * 变更会触发 tag 分析
-         * 导致 tag 数据累加（错误）
-         */
-        repositoriesTmp = [...state.all];
-      } else if (tagStore.selectedType === TAG_TYPE.topic) {
-        /**
-         * 当前选中的 tag 属于 Topics
-         * 从 topicMap 找到 tag 及其对应的 repositories id
-         */
-        const repositoryIds = tagStore.topicMap[tagStore.selected];
-        if (repositoryIds) {
-          repositoriesTmp = state.all.filter((repository) =>
-            repositoryIds.includes(repository.id),
-          );
+      if (tagStore.tagSrc === TAG_SRC.self) {
+        if (!tagStore.selectedTag) {
+          /**
+           * 当前未选中 tag
+           * 展示所有 repositories
+           * 不可直接使用 state.all
+           * 下文的排序处理会对 repositoriesTmp 进行变更
+           * 变更会触发 tag 分析
+           * 导致 tag 数据累加（错误）
+           */
+          repositoriesTmp = [...state.all];
+        } else if (tagStore.selectedTagType === TAG_TYPE.topic) {
+          /**
+           * 当前选中的 tag 属于 Topics
+           * 从 topicMap 找到 tag 及其对应的 repositories id
+           */
+          const repositoryIds = tagStore.topicMap[tagStore.selectedTag];
+          if (repositoryIds) {
+            repositoriesTmp = state.all.filter((repository) =>
+              repositoryIds.includes(repository.id),
+            );
+          }
+        } else if (tagStore.selectedTagType === TAG_TYPE.language) {
+          /**
+           * 当前选中的 tag 属于 Languages
+           * 从 languageMap 找到 tag 及其对应的 repositories id
+           */
+          const repositoryIds = tagStore.languageMap[tagStore.selectedTag];
+          if (repositoryIds) {
+            repositoriesTmp = state.all.filter((repository) =>
+              repositoryIds.includes(repository.id),
+            );
+          }
         }
-      } else if (tagStore.selectedType === TAG_TYPE.language) {
-        /**
-         * 当前选中的 tag 属于 Languages
-         * 从 languageMap 找到 tag 及其对应的 repositories id
-         */
-        const repositoryIds = tagStore.languageMap[tagStore.selected];
-        if (repositoryIds) {
-          repositoriesTmp = state.all.filter((repository) =>
-            repositoryIds.includes(repository.id),
-          );
+      } else if (tagStore.tagSrc === TAG_SRC.github) {
+        if (rankingStore.selectedLanguage) {
+          repositoriesTmp = [
+            ...(rankingStore.languageMap[rankingStore.selectedLanguage] ?? []),
+          ];
+        } else {
+          repositoriesTmp = [...(rankingStore.languageMap.all ?? [])];
         }
       }
 
@@ -111,6 +153,7 @@ export const useRepositoryStore = defineStore('repository', {
        * 只需处理按 star 数量排序
        */
       if (
+        tagStore.tagSrc === TAG_SRC.self &&
         repositoriesTmp.length > 0 &&
         state.sortType === REPO_SORT_TYPE.star.value
       ) {
@@ -124,7 +167,11 @@ export const useRepositoryStore = defineStore('repository', {
      * 当前选中的 repository
      */
     selectedRepository: (state) => {
-      return state.all.find((item) => item.id === state.selectedId);
+      const rankingStore = useRankingStore();
+      return (
+        state.all.find((item) => item.id === state.selectedId) ||
+        rankingStore.repositories.find((item) => item.id === state.selectedId)
+      );
     },
   },
 
@@ -135,19 +182,16 @@ export const useRepositoryStore = defineStore('repository', {
      */
     async resolveRepositories() {
       this.loading = true;
-      let localRepos = localStorage.getItem(STARRED_REPOS);
-      if (localRepos) {
-        localRepos = JSON.parse(localRepos);
-        this.all = localRepos;
+      let localRepositories = localStorage.getItem(STARRED_REPOS);
 
-        // 开发环境默认不通过 HTTP 更新 repositories
-        if (!import.meta.env.DEV) {
-          const tmp = await _resolveRepositories();
-          this.all = tmp;
-          localStorage.setItem(STARRED_REPOS, JSON.stringify(this.all));
-        }
-      } else {
-        await _resolveRepositories(this.all);
+      if (localRepositories) {
+        localRepositories = JSON.parse(localRepositories);
+        this.all = localRepositories;
+      }
+
+      // 开发环境默认不通过 HTTP 更新 repositories
+      if (!import.meta.env.DEV) {
+        await handlerRsolveRepositories(this.all);
         localStorage.setItem(STARRED_REPOS, JSON.stringify(this.all));
       }
       this.loading = false;

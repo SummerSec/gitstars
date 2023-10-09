@@ -5,25 +5,29 @@
       class="broder-b-gray-300 flex h-9 items-center border-b border-solid px-4"
     >
       <a
-        :href="selectedRepository?.html_url"
-        class="inline-flex items-center"
+        :href="toRepositoryHref(selectedRepository)"
+        class="inline-flex items-center hover:underline"
         rel="noopener noreferrer"
       >
-        <svg-icon name="github" class="mr-3 text-2xl" />
         <h2 class="text-lg font-bold">
+          <svg-icon name="github" class="text-xl" />
           {{ selectedRepository?.owner.login }} /
           {{ selectedRepository?.name }}
+          <svg-icon name="share" class="text-sm" />
         </h2>
       </a>
     </header>
 
     <div
       v-show="!readme"
-      class="absolute top-1/3 w-full text-center text-neutral-300"
+      class="relative top-1/3 mx-auto w-60 text-center text-gray-300"
     >
       <p class="mb-2 text-3xl font-bold">README.md</p>
-      <p v-if="!selectedRepository" class="text-sm tracking-widest">
-        <svg-icon name="hand-left" class="mr-2 align-sub" />点击左侧仓库查看
+      <p
+        v-if="!selectedRepository"
+        class="flex items-center justify-center text-sm"
+      >
+        <svg-icon name="hand-left" class="mr-1 text-base" />点击左侧仓库查看
       </p>
       <svg-icon v-show="loading" name="loading" class="animate-spin text-2xl" />
     </div>
@@ -113,6 +117,9 @@ watchEffect(async () => {
     refReadme.value.scrollTo({ top: 0 });
   });
 });
+
+const toRepositoryHref = (repository) =>
+  `https://github.com/${repository.owner.login}/${repository.name}`;
 </script>
 
 <style src="github-markdown-css/github-markdown-light.css"></style>

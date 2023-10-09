@@ -36,9 +36,11 @@
     </DynamicScroller>
 
     <svg-icon
-      v-show="repositoryStore.all.length === 0"
+      v-show="
+        tagStore.tagSrc === TAG_SRC.self && repositoryStore.all.length === 0
+      "
       name="loading"
-      class="absolute left-1/2 top-1/2 animate-spin text-2xl"
+      class="absolute left-1/2 top-1/3 -ml-3 animate-spin text-2xl text-gray-300"
     />
   </div>
 </template>
@@ -49,6 +51,7 @@ import RepositoryCard from './repository-card.vue';
 import RepositorySearch from './repository-search.vue';
 import { useRepositoryStore } from '@/store/repository';
 import { useTagStore } from '@/store/tag';
+import { TAG_SRC } from '@/constants';
 
 const repositoryStore = useRepositoryStore();
 const tagStore = useTagStore();
